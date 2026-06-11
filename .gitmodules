@@ -1,0 +1,6 @@
+[submodule "MLRL01"]
+	path = MLRL01
+	url = https://github.com/riza10l/MLRL01.git
+[submodule "MLRL02"]
+	path = MLRL02
+	url = https://github.com/riza10l/MLRL02.git
