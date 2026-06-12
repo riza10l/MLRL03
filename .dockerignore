@@ -1,0 +1,31 @@
+# Ignore python virtual environments
+**/.venv/
+**/venv/
+**/myenv/
+**/env/
+
+# Ignore node modules and build outputs
+**/node_modules/
+**/.next/
+**/dist/
+
+# Ignore git and IDE configurations
+.git/
+.github/
+.idea/
+.vscode/
+
+# Ignore local databases and sqlite files
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Ignore python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Ignore local results/artifacts (mounted via volumes anyway)
+results/
+**/results/

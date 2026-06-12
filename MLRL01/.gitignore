@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+myenv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files
+*.csv
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Model checkpoints
+models/
+checkpoints/
+*.zip
+*.pt
+*.pth
+
+# Generated results
+results/monte_carlo/
+results/plots/
+!results/plots/.gitkeep
+!results/plots/reports/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.tmp
+*.bak

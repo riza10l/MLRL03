@@ -25,3 +25,10 @@ __pycache__/
 # Logs
 logs/
 tensorboard/
+
+# Databases
+*.db
+*.sqlite3
+
+# Scratch
+scratch/
