@@ -15,8 +15,8 @@ const configSchema = z.object({
   rl_algorithm: z.enum(["PPO", "RecurrentPPO"]),
   rl_timesteps: z.number().int().min(10000).max(10000000),
   learning_rate: z.number().min(1e-6).max(1e-2),
-  batch_size: z.coerce.number().refine(val => [32, 64, 128, 256].includes(val), {
-    message: "Batch size must be 32, 64, 128, or 256",
+  batch_size: z.coerce.number().refine(val => [16, 32, 64, 128, 256].includes(val), {
+    message: "Batch size must be 16, 32, 64, 128, or 256",
   }),
   gamma: z.number().min(0.9).max(0.999),
   gae_lambda: z.number().min(0.8).max(1.0),
@@ -47,14 +47,14 @@ export default function HyperparameterForm({ onSubmit, loading = false }: Hyperp
     train_ratio: 0.80,
     embargo_bars: 60,
     rl_algorithm: "RecurrentPPO",
-    rl_timesteps: 100000,
+    rl_timesteps: 10000,
     learning_rate: 0.0003,
-    batch_size: 64,
+    batch_size: 16,
     gamma: 0.99,
     gae_lambda: 0.95,
     clip_range: 0.2,
     ent_coef: 0.01,
-    lstm_hidden: 128,
+    lstm_hidden: 64,
     initial_capital: 100000,
     fee_rate: 0.0001,
     spread_cost: 0.0003,
@@ -282,12 +282,8 @@ export default function HyperparameterForm({ onSubmit, loading = false }: Hyperp
 
           <div>
             <label className="block text-xs font-semibold text-zinc-400 mb-1.5">Batch Size</label>
-            <select
-              name="batch_size"
-              value={inputs.batch_size}
-              onChange={handleInputChange}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition"
-            >
+            <select name="batch_size" value={inputs.batch_size} onChange={handleInputChange} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition">
+              <option value={16}>16</option>
               <option value={32}>32</option>
               <option value={64}>64</option>
               <option value={128}>128</option>

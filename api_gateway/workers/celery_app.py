@@ -34,5 +34,7 @@ celery_app.conf.update(
     task_routes={
         "workers.muscle_tasks.*": {"queue": "muscle"},
         "workers.brain_tasks.*": {"queue": "brain"},
-    }
+    },
+    worker_max_tasks_per_child=10,
+    worker_max_memory_per_child=512000  # 512MB limit per worker
 )

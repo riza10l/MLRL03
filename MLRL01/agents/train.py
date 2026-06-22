@@ -21,14 +21,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from features.feature_engineering import build_all_features, get_feature_columns
 from features.regime_detection import add_regime_features
-from env.trading_env import TradingEnv
-from agents.ppo_agent import PPOAgent
+try:
+    from stable_baselines3 import PPO
+    from env.trading_env import TradingEnv
+    from agents.ppo_agent import PPOAgent
+except ImportError:
+    PPO = None
+    TradingEnv = None
+    PPOAgent = None
 from risk.risk_manager import RiskManager
 
 SCALED_MODELS = {"Logistic Regression", "SVM"}
 
 # Embargo size: max rolling window used in features
 EMBARGO_BARS = 60
+
+def _downcast_float64(df):
+    """Downcast float64 columns to float32 to halve memory usage.
+    Precision loss is negligible for trading features."""
+    float_cols = df.select_dtypes(include=['float64']).columns
+    if len(float_cols) > 0:
+        saved = df[float_cols].memory_usage(deep=True).sum()
+        df[float_cols] = df[float_cols].astype(np.float32)
+        after = df[float_cols].memory_usage(deep=True).sum()
+        print(f"[MEM] float64→float32: {saved/1e6:.1f}MB → {after/1e6:.1f}MB (saved {(saved-after)/1e6:.1f}MB)")
+    return df
 
 def load_latest_data(data_dir="../jupiter"):
     
@@ -49,6 +66,8 @@ def load_latest_data(data_dir="../jupiter"):
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
     df.dropna(subset=["open", "high", "low", "close", "volume"], inplace=True)
+    # --- OPTIMIZED: Downcast to float32 to halve memory ---
+    df = _downcast_float64(df)
     print(f"[DATA] Rows: {len(df):,} | {df['date'].min().date()} -> {df['date'].max().date()}")
     return df
 
@@ -171,7 +190,9 @@ def walk_forward_validation(df, feature_cols, train_years=3, test_years=1,
         # Train RL
         env_train = TradingEnv(df_train_raw, feature_columns=feature_cols)
         agent = PPOAgent(env_train, verbose=0)
-        agent.train(total_timesteps=50_000)
+        # --- OPTIMIZED: Configurable timesteps via env var (default 10K for low-end) ---
+        wf_timesteps = int(os.environ.get("WF_TIMESTEPS", "10000"))
+        agent.train(total_timesteps=wf_timesteps)
 
         # Evaluate on test
         env_test = TradingEnv(df_test, feature_columns=feature_cols)

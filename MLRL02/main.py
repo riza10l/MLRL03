@@ -31,10 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.mlrl02 import MLRL02
 
-
-# ──────────────────────────────────────────────
-#  CLI COMMANDS
-# ──────────────────────────────────────────────
+# commands on cli
 
 def cmd_chat(question: str, use_agent: bool = False):
     """Chat with the AI system."""
@@ -56,7 +53,7 @@ def cmd_interactive():
     system.boot()
 
     print("\n" + "=" * 50)
-    print("  🧠 MLRL02 — Interactive Chat")
+    print("   MLRL02 — Interactive Chat")
     print("  Type 'quit' to exit, 'stats' for system status")
     print("=" * 50 + "\n")
 

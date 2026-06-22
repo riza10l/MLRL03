@@ -1,4 +1,5 @@
-
+import os
+import hashlib
 import numpy as np
 import pandas as pd
 from typing import List, Tuple
@@ -44,41 +45,69 @@ def _triple_barrier_target(df: pd.DataFrame, horizon: int = 5,
     atr = pd.Series(tr).rolling(14, min_periods=1).mean().values
 
     n = len(df)
-    labels = np.full(n, np.nan)
+
+    # --- OPTIMIZED: Vectorized triple-barrier scanning ---
+    # Instead of O(n*horizon) Python loop iterations, iterate over O(horizon)
+    # offsets and use full-array NumPy comparisons at each offset.
+    entry_prices = closes.copy()
+    barrier_atr = atr * atr_mult
+    upper_barriers = entry_prices + barrier_atr
+    lower_barriers = entry_prices - barrier_atr
+
+    # Track first barrier hit offset and type for every row
+    first_hit_offset = np.full(n, horizon + 1, dtype=np.int32)  # no hit = horizon+1
+    hit_type = np.zeros(n, dtype=np.int8)  # 0=none, 1=upper, -1=lower
+
+    for offset in range(1, horizon + 1):
+        # Shifted highs/lows: for row i, we look at bar i+offset
+        # Use slicing instead of np.roll to avoid wrap-around contamination
+        if offset >= n:
+            break
+
+        shifted_highs = np.empty(n)
+        shifted_highs[:] = np.nan
+        shifted_highs[:n - offset] = highs[offset:]
+
+        shifted_lows = np.empty(n)
+        shifted_lows[:] = np.nan
+        shifted_lows[:n - offset] = lows[offset:]
+
+        # Check upper barrier hit at this offset (only for rows not yet hit)
+        not_yet_hit = first_hit_offset > offset  # rows still looking
+        hits_upper = not_yet_hit & (shifted_highs >= upper_barriers)
+        hits_lower = not_yet_hit & ~hits_upper & (shifted_lows <= lower_barriers)
+
+        first_hit_offset[hits_upper] = offset
+        hit_type[hits_upper] = 1
+        first_hit_offset[hits_lower] = offset
+        hit_type[hits_lower] = -1
+
+    # Compute exit prices and labels vectorized
+    # Default exit price: close at i + horizon (vertical barrier)
+    end_indices = np.minimum(np.arange(n) + horizon, n - 1)
+    exit_prices = closes[end_indices]
+
+    # Override exit price where barriers were hit
+    upper_hit_mask = hit_type == 1
+    lower_hit_mask = hit_type == -1
+    exit_prices[upper_hit_mask] = upper_barriers[upper_hit_mask]
+    exit_prices[lower_hit_mask] = lower_barriers[lower_hit_mask]
+
+    # Compute target returns for all valid rows
     target_returns = np.full(n, np.nan)
+    valid = np.arange(n) < (n - horizon)
+    target_returns[valid] = (exit_prices[valid] - entry_prices[valid]) / (entry_prices[valid] + 1e-10)
 
-    for i in range(n - horizon):
-        entry_price = closes[i]
-        barrier_atr = atr[i] * atr_mult
+    # Assign labels
+    labels = np.full(n, np.nan)
+    valid_upper = valid & upper_hit_mask
+    valid_lower = valid & lower_hit_mask
+    valid_vertical = valid & ~upper_hit_mask & ~lower_hit_mask
 
-        upper = entry_price + barrier_atr
-        lower = entry_price - barrier_atr
-
-        # Scan forward bars
-        hit_upper = False
-        hit_lower = False
-        exit_price = closes[min(i + horizon, n - 1)]
-
-        for j in range(i + 1, min(i + horizon + 1, n)):
-            if highs[j] >= upper:
-                hit_upper = True
-                exit_price = upper
-                break
-            if lows[j] <= lower:
-                hit_lower = True
-                exit_price = lower
-                break
-
-        if hit_upper:
-            labels[i] = 1
-        elif hit_lower:
-            labels[i] = 0
-        else:
-            # Vertical barrier — use direction of final return
-            final_ret = (exit_price - entry_price) / (entry_price + 1e-10)
-            labels[i] = 1 if final_ret > 0 else 0
-
-        target_returns[i] = (exit_price - entry_price) / (entry_price + 1e-10)
+    labels[valid_upper] = 1
+    labels[valid_lower] = 0
+    # Vertical barrier — use direction of final return
+    labels[valid_vertical] = np.where(target_returns[valid_vertical] > 0, 1, 0).astype(float)
 
     df['target'] = labels
     df['target_return'] = target_returns
@@ -88,12 +117,30 @@ def _triple_barrier_target(df: pd.DataFrame, horizon: int = 5,
 def build_production_features(df: pd.DataFrame,
                                target_horizon: int = 5,
                                target_threshold: float = 0.005,
-                               target_method: str = "triple_barrier") -> pd.DataFrame:
+                               target_method: str = "triple_barrier",
+                               use_cache: bool = True,
+                               cache_dir: str = "results/cache") -> pd.DataFrame:
     df = df.copy()
 
     # Ensure date column exists and is datetime
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'])
+
+    # --- OPTIMIZED: Feature Caching ---
+    if use_cache:
+        os.makedirs(cache_dir, exist_ok=True)
+        # Create a simple hash based on dataset size, dates, and parameters
+        n_rows = len(df)
+        max_date = df['date'].max() if 'date' in df.columns else 'unknown'
+        cache_str = f"{n_rows}_{max_date}_{target_horizon}_{target_threshold}_{target_method}"
+        cache_hash = hashlib.md5(cache_str.encode()).hexdigest()
+        cache_file = os.path.join(cache_dir, f"features_{cache_hash}.parquet")
+        
+        if os.path.exists(cache_file):
+            print(f"[FEAT-CACHE] Loading cached features from {cache_file}")
+            return pd.read_parquet(cache_file)
+        else:
+            print(f"[FEAT-CACHE] Cache not found. Building features... (will save to {cache_file})")
 
     #  STEP 1: Compute raw intermediates (no shift yet) 
     # These are helper columns; final features will use shift(1)
@@ -218,14 +265,24 @@ def build_production_features(df: pd.DataFrame,
     df['rolling_dd_60'] = (cum_ret - rolling_peak) / (rolling_peak + 1e-8)
 
     # Autocorrelation (lag-1)
-    df['autocorr_5'] = df['ret_1d'].rolling(20).apply(
-        lambda x: x.autocorr(lag=1) if len(x) > 5 else 0, raw=False
-    )
+    # --- OPTIMIZED: Vectorized lag-1 autocorrelation using rolling cov / var ---
+    # Replaces slow rolling().apply(lambda) with built-in pandas rolling ops
+    _ret = df['ret_1d']
+    _ret_lag = _ret.shift(1)
+    _rolling_cov = _ret.rolling(20).cov(_ret_lag)
+    _rolling_var = _ret.rolling(20).var()
+    df['autocorr_5'] = _rolling_cov / (_rolling_var + 1e-8)
 
     # Hurst exponent approximation (R/S method, simplified)
-    df['hurst_approx'] = df['ret_1d'].rolling(50, min_periods=20).apply(
-        _hurst_rs, raw=True
-    )
+    # --- OPTIMIZED: Variance-ratio approximation of Hurst exponent ---
+    # Replaces rolling().apply(_hurst_rs) with fully vectorized variance ratio.
+    # H ≈ log(var_long / var_short) / (2 * log(window_long / window_short))
+    _var_short = df['ret_1d'].rolling(20, min_periods=10).var()
+    _var_long = df['ret_1d'].rolling(50, min_periods=20).var()
+    df['hurst_approx'] = (
+        np.log((_var_long / (_var_short + 1e-10)).clip(lower=1e-10)) /
+        (2 * np.log(50 / 20))
+    ).clip(0, 1).fillna(0.5)
 
     # Volatility clustering (GARCH-like proxy)
     sq_ret = df['ret_1d'] ** 2
@@ -244,6 +301,14 @@ def build_production_features(df: pd.DataFrame,
     print(f"[FEAT-V4] {len(feature_cols)} features | {len(df):,} rows | "
           f"horizon={target_horizon}d | method={target_method} | "
           f"target_mean={df['target'].mean():.2%}")
+
+    # --- OPTIMIZED: Save to Cache ---
+    if use_cache and 'cache_file' in locals():
+        try:
+            df.to_parquet(cache_file)
+            print(f"[FEAT-CACHE] Saved features to {cache_file}")
+        except Exception as e:
+            print(f"[FEAT-CACHE] Failed to save cache: {e}")
 
     return df
 

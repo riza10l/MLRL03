@@ -34,18 +34,18 @@ env:
 rl:
   algorithm: "RecurrentPPO"
   policy: "MlpLstmPolicy"
-  timesteps: 100000
+  timesteps: 10000
   learning_rate: 0.0003
-  batch_size: 64
+  batch_size: 16
   n_steps: 2048
   gae_lambda: 0.95
   gamma: 0.99
   
   # Network
-  lstm_hidden_size: 128
+  lstm_hidden_size: 64
   net_arch:
-    pi: [128, 64]
-    vf: [128, 64]
+    pi: [64, 32]
+    vf: [64, 32]
 
 # Index -> Weight
 # 0: 0.0  (Flat)

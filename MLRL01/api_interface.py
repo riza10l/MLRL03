@@ -3,7 +3,10 @@ import sys
 import json
 import numpy as np
 import pandas as pd
-import redis
+try:
+    import redis
+except ImportError:
+    redis = None
 from typing import Dict, Tuple, Any, List
 
 # Add current dir to path

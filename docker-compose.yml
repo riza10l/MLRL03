@@ -55,13 +55,13 @@ services:
       - redis
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # === Worker Brain (MLRL02) ===
   worker-brain:

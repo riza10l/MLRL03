@@ -26,34 +26,32 @@ class MonteCarloSimulator:
         n = len(daily_returns)
         n_blocks = max(1, n // block_size)
 
-        all_equity = []
-        all_final_returns = []
-        all_max_dd = []
-        all_sharpe = []
+        # Generate all block-start indices for every sim at once (2D batch)
+        all_starts = self.rng.randint(0, n - block_size, size=(self.n_sims, n_blocks))
 
-        for _ in range(self.n_sims):
+        # Build all simulated return series as a 2D array (n_sims × n)
+        all_sim_returns = np.array([
             # Sample random block start indices
-            starts = self.rng.randint(0, n - block_size, size=n_blocks)
-            sim_returns = np.concatenate([
-                daily_returns[s:s + block_size] for s in starts
-            ])[:n]  # Trim to original length
+            np.concatenate([daily_returns[s:s + block_size] for s in starts])[:n]
+            for starts in all_starts
+        ])  # Trim to original length
 
-            # Build equity curve
-            equity = [initial_capital]
-            for ret in sim_returns:
-                equity.append(equity[-1] * (1 + ret))
-            equity = np.array(equity)
+        # Vectorised equity curves via cumprod (n_sims × n+1)
+        all_equity = initial_capital * np.column_stack([
+            np.ones(self.n_sims),
+            np.cumprod(1 + all_sim_returns, axis=1)
+        ])
 
-            all_equity.append(equity)
-            all_final_returns.append((equity[-1] - initial_capital) / initial_capital)
-            all_max_dd.append(self._max_drawdown(equity))
-            all_sharpe.append(self._sharpe(sim_returns))
+        # Vectorised final returns, drawdowns, sharpes
+        all_final_returns = (all_equity[:, -1] - initial_capital) / initial_capital
+        all_max_dd = np.array([self._max_drawdown(eq) for eq in all_equity])
+        all_sharpe = np.array([self._sharpe(sr) for sr in all_sim_returns])
 
         return {
-            "equity_curves": all_equity,
-            "returns": np.array(all_final_returns),
-            "max_drawdowns": np.array(all_max_dd),
-            "sharpe_ratios": np.array(all_sharpe),
+            "equity_curves": list(all_equity),
+            "returns": all_final_returns,
+            "max_drawdowns": all_max_dd,
+            "sharpe_ratios": all_sharpe,
             "n_sims": self.n_sims,
             "method": "block_bootstrap",
         }
@@ -84,37 +82,37 @@ class MonteCarloSimulator:
         if len(high_vol_returns) == 0 or len(low_vol_returns) == 0:
             return self.run_block_bootstrap(daily_returns, initial_capital=initial_capital)
 
-        all_equity = []
-        all_final_returns = []
-        all_max_dd = []
-        all_sharpe = []
+        n_high = int(high_vol_mask.sum())
+        n_low = n - n_high
 
-        for _ in range(self.n_sims):
-            sim_returns = np.zeros(n)
-            for i in range(n):
-                if high_vol_mask[i]:
-                    sim_returns[i] = self.rng.choice(high_vol_returns)
-                else:
-                    sim_returns[i] = self.rng.choice(low_vol_returns)
+        # Pre-sample all regime-aware returns for every sim at once (2D batch)
+        high_samples = self.rng.choice(high_vol_returns, size=(self.n_sims, n_high), replace=True)
+        low_samples = self.rng.choice(low_vol_returns, size=(self.n_sims, n_low), replace=True)
 
-            # Add small noise for variation
-            sim_returns += self.rng.normal(0, 0.0005, size=n)
+        # Assemble full return arrays by scattering regime samples into position
+        all_sim_returns = np.empty((self.n_sims, n))
+        all_sim_returns[:, high_vol_mask] = high_samples
+        all_sim_returns[:, low_vol_mask] = low_samples
 
-            equity = [initial_capital]
-            for ret in sim_returns:
-                equity.append(equity[-1] * (1 + ret))
-            equity = np.array(equity)
+        # Add small noise for variation
+        all_sim_returns += self.rng.normal(0, 0.0005, size=(self.n_sims, n))
 
-            all_equity.append(equity)
-            all_final_returns.append((equity[-1] - initial_capital) / initial_capital)
-            all_max_dd.append(self._max_drawdown(equity))
-            all_sharpe.append(self._sharpe(sim_returns))
+        # Vectorised equity curves via cumprod (n_sims × n+1)
+        all_equity = initial_capital * np.column_stack([
+            np.ones(self.n_sims),
+            np.cumprod(1 + all_sim_returns, axis=1)
+        ])
+
+        # Vectorised final returns, drawdowns, sharpes
+        all_final_returns = (all_equity[:, -1] - initial_capital) / initial_capital
+        all_max_dd = np.array([self._max_drawdown(eq) for eq in all_equity])
+        all_sharpe = np.array([self._sharpe(sr) for sr in all_sim_returns])
 
         return {
-            "equity_curves": all_equity,
-            "returns": np.array(all_final_returns),
-            "max_drawdowns": np.array(all_max_dd),
-            "sharpe_ratios": np.array(all_sharpe),
+            "equity_curves": list(all_equity),
+            "returns": all_final_returns,
+            "max_drawdowns": all_max_dd,
+            "sharpe_ratios": all_sharpe,
             "n_sims": self.n_sims,
             "method": "regime_aware",
         }
@@ -128,28 +126,25 @@ class MonteCarloSimulator:
 
         n_trades = n_trades_per_sim or len(trade_returns)
 
-        all_equity = []
-        all_final_returns = []
-        all_max_dd = []
-        all_sharpe = []
+        # Batch-sample all trade returns for every sim at once (2D)
+        all_sampled = self.rng.choice(trade_returns, size=(self.n_sims, n_trades), replace=True)
 
-        for _ in range(self.n_sims):
-            sampled = self.rng.choice(trade_returns, size=n_trades, replace=True)
-            equity = [initial_capital]
-            for ret in sampled:
-                equity.append(equity[-1] * (1 + ret))
-            equity = np.array(equity)
+        # Vectorised equity curves via cumprod (n_sims × n_trades+1)
+        all_equity = initial_capital * np.column_stack([
+            np.ones(self.n_sims),
+            np.cumprod(1 + all_sampled, axis=1)
+        ])
 
-            all_equity.append(equity)
-            all_final_returns.append((equity[-1] - initial_capital) / initial_capital)
-            all_max_dd.append(self._max_drawdown(equity))
-            all_sharpe.append(self._sharpe(sampled))
+        # Vectorised final returns, drawdowns, sharpes
+        all_final_returns = (all_equity[:, -1] - initial_capital) / initial_capital
+        all_max_dd = np.array([self._max_drawdown(eq) for eq in all_equity])
+        all_sharpe = np.array([self._sharpe(sr) for sr in all_sampled])
 
         return {
-            "equity_curves": all_equity,
-            "returns": np.array(all_final_returns),
-            "max_drawdowns": np.array(all_max_dd),
-            "sharpe_ratios": np.array(all_sharpe),
+            "equity_curves": list(all_equity),
+            "returns": all_final_returns,
+            "max_drawdowns": all_max_dd,
+            "sharpe_ratios": all_sharpe,
             "n_sims": self.n_sims,
             "method": "trade_resample",
         }
@@ -161,30 +156,28 @@ class MonteCarloSimulator:
         if len(daily_returns) == 0:
             return self._empty_result()
 
-        all_equity = []
-        all_final_returns = []
-        all_max_dd = []
-        all_sharpe = []
+        n = len(daily_returns)
 
-        for _ in range(self.n_sims):
-            noise = self.rng.normal(0, noise_std, size=len(daily_returns))
-            perturbed = daily_returns + noise
+        # Generate all noise for every sim at once (2D batch)
+        all_noise = self.rng.normal(0, noise_std, size=(self.n_sims, n))
+        all_perturbed = daily_returns[np.newaxis, :] + all_noise
 
-            equity = [initial_capital]
-            for ret in perturbed:
-                equity.append(equity[-1] * (1 + ret))
-            equity = np.array(equity)
+        # Vectorised equity curves via cumprod (n_sims × n+1)
+        all_equity = initial_capital * np.column_stack([
+            np.ones(self.n_sims),
+            np.cumprod(1 + all_perturbed, axis=1)
+        ])
 
-            all_equity.append(equity)
-            all_final_returns.append((equity[-1] - initial_capital) / initial_capital)
-            all_max_dd.append(self._max_drawdown(equity))
-            all_sharpe.append(self._sharpe(perturbed))
+        # Vectorised final returns, drawdowns, sharpes
+        all_final_returns = (all_equity[:, -1] - initial_capital) / initial_capital
+        all_max_dd = np.array([self._max_drawdown(eq) for eq in all_equity])
+        all_sharpe = np.array([self._sharpe(sr) for sr in all_perturbed])
 
         return {
-            "equity_curves": all_equity,
-            "returns": np.array(all_final_returns),
-            "max_drawdowns": np.array(all_max_dd),
-            "sharpe_ratios": np.array(all_sharpe),
+            "equity_curves": list(all_equity),
+            "returns": all_final_returns,
+            "max_drawdowns": all_max_dd,
+            "sharpe_ratios": all_sharpe,
             "n_sims": self.n_sims,
             "method": "return_perturbation",
         }
@@ -203,16 +196,20 @@ class MonteCarloSimulator:
         all_max_dd = []
 
         for _ in range(self.n_sims):
-            equity = [initial_capital]
-            for ret in daily_returns:
-                trade_today = self.rng.random() < avg_trades_per_day
-                if trade_today:
-                    cost = max(0, self.rng.normal(base_cost_per_trade, cost_std))
-                    adjusted_ret = ret - cost
-                else:
-                    adjusted_ret = ret
-                equity.append(equity[-1] * (1 + adjusted_ret))
-            equity = np.array(equity)
+            # Pre-generate all random decisions at once
+            trade_mask = self.rng.random(size=len(daily_returns)) < avg_trades_per_day
+            costs = np.where(
+                trade_mask,
+                np.maximum(0, self.rng.normal(base_cost_per_trade, cost_std,
+                                              size=len(daily_returns))),
+                0.0
+            )
+            adjusted_returns = daily_returns - costs
+
+            # Vectorised equity curve via cumprod
+            equity = initial_capital * np.concatenate([
+                [1.0], np.cumprod(1 + adjusted_returns)
+            ])
 
             all_equity.append(equity)
             all_final_returns.append((equity[-1] - initial_capital) / initial_capital)
@@ -242,20 +239,22 @@ class MonteCarloSimulator:
         all_max_dd = []
 
         for _ in range(self.n_sims):
-            equity = [initial_capital]
-            for i, ret in enumerate(daily_returns):
-                adjusted_ret = ret
+            adjusted = daily_returns.copy()
 
-                # Random flash crash
-                if self.rng.random() < crash_probability:
-                    adjusted_ret += crash_magnitude
+            # Pre-generate all crash events at once
+            crash_mask = self.rng.random(size=n) < crash_probability
+            # Random flash crash
+            adjusted[crash_mask] += crash_magnitude
 
-                # Random spread explosion
-                if self.rng.random() < crash_probability * 2:
-                    adjusted_ret -= 0.001 * spread_explosion_mult
+            # Pre-generate all spread explosion events at once
+            spread_mask = self.rng.random(size=n) < crash_probability * 2
+            # Random spread explosion
+            adjusted[spread_mask] -= 0.001 * spread_explosion_mult
 
-                equity.append(equity[-1] * (1 + adjusted_ret))
-            equity = np.array(equity)
+            # Vectorised equity curve via cumprod
+            equity = initial_capital * np.concatenate([
+                [1.0], np.cumprod(1 + adjusted)
+            ])
 
             all_equity.append(equity)
             all_final_returns.append((equity[-1] - initial_capital) / initial_capital)

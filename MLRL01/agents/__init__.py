@@ -1,1 +1,4 @@
-from .ppo_agent import PPOAgent
+try:
+    from .ppo_agent import PPOAgent
+except ImportError:
+    PPOAgent = None

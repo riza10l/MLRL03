@@ -23,7 +23,7 @@ def get_mlrl02_instance():
     
     # Initialize MLRL02 pointing to its workspace
     workspace = os.path.abspath(os.path.join(settings.MLRL02_PATH, "workspace"))
-    system = MLRL02(workspace_dir=workspace, model="llama3", verbose=False)
+    system = MLRL02(workspace_dir=workspace, model="deepseek-r1:8b", verbose=False)
     system.boot(verbose=False)
     return system
 
